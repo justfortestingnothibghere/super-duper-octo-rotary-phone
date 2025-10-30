@@ -1,0 +1,9 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>Login</h2>
+  <form method="post">
+    <input name="loginid" placeholder="username or email" required>
+    <input name="password" placeholder="password" type="password" required>
+    <button type="submit">Login</button>
+  </form>
+{% endblock %}
