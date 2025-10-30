@@ -1,0 +1,15 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>{{ user.name }} {% if user.verified %}<span class="badge">✅ Verified</span>{% endif %}</h2>
+  {% if user.profile_photo %}
+    <img src="/{{ user.profile_photo }}" alt="profile" class="profile-photo">
+  {% endif %}
+  <p>@{{ user.username }}</p>
+  <p>{{ user.bio }}</p>
+  <h3>Shared Texts</h3>
+  {% for t in texts %}
+    <div class="text-item">{{ t.content }} <small>{{ t.created_at.strftime('%Y-%m-%d %H:%M') }}</small></div>
+  {% else %}
+    <p>No texts.</p>
+  {% endfor %}
+{% endblock %}
