@@ -1,0 +1,10 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>Request Verification</h2>
+  <form method="post" enctype="multipart/form-data">
+    <textarea name="description" placeholder="Why should you be verified?" required></textarea>
+    <input name="pan_number" placeholder="PAN number (optional)">
+    <label>Upload supporting document: <input type="file" name="document"></label>
+    <button type="submit">Submit Request</button>
+  </form>
+{% endblock %}
