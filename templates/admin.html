@@ -1,0 +1,32 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>Admin Panel</h2>
+  <h3>Verification Requests</h3>
+  <table>
+    <tr><th>ID</th><th>User</th><th>Description</th><th>Document</th><th>Status</th><th>Actions</th></tr>
+    {% for r in requests %}
+      <tr>
+        <td>{{ r.id }}</td>
+        <td><a href="/profile/{{ r.username }}">{{ r.username }}</a></td>
+        <td>{{ r.description }}</td>
+        <td>{% if r.document_path %}<a href="/{{ r.document_path }}">view</a>{% else %}-{% endif %}</td>
+        <td>{{ r.status }}</td>
+        <td>
+          {% if r.status == 'pending' %}
+            <a href="/admin/handle/{{ r.id }}/approve">Approve</a> |
+            <a href="/admin/handle/{{ r.id }}/reject">Reject</a>
+          {% endif %}
+        </td>
+      </tr>
+    {% else %}
+      <tr><td colspan="6">No requests</td></tr>
+    {% endfor %}
+  </table>
+
+  <h3>Users</h3>
+  <ul>
+    {% for u in users %}
+      <li>@{{ u.username }} - {{ 'Admin' if u.is_admin else 'User' }} - Verified: {{ u.verified }}</li>
+    {% endfor %}
+  </ul>
+{% endblock %}
