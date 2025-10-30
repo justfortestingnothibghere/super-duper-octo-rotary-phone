@@ -1,5 +1,5 @@
 import eventlet
-eventlet.monkey_patch()  # ✅ must be first!
+eventlet.monkey_patch()  # ✅ Must be first, before any Flask imports!
 
 import os
 from datetime import datetime
@@ -10,7 +10,7 @@ from werkzeug.utils import secure_filename
 from flask_socketio import SocketIO
 from dotenv import load_dotenv
 
-# Load environment
+# Load environment variables
 load_dotenv()
 
 # ----- Setup -----
@@ -26,13 +26,17 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///' + os.path.join(BASE_DIR, 'data.db'))
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB limit
 
 db = SQLAlchemy(app)
 login = LoginManager(app)
 login.login_view = 'login'
 
-# ✅ Enable SocketIO with Eventlet
+# ✅ Auto create tables for Render (important)
+with app.app_context():
+    db.create_all()
+
+# ✅ Enable real-time events
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # ===================== MODELS =====================
@@ -44,7 +48,7 @@ class User(db.Model, UserMixin):
     phone = db.Column(db.String(40), nullable=True)
     bio = db.Column(db.Text, nullable=True)
     profile_photo = db.Column(db.String(300), nullable=True)
-    password = db.Column(db.String(200), nullable=False)  # NOTE: plain text (demo)
+    password = db.Column(db.String(200), nullable=False)  # ⚠️ Plain text (demo only)
     is_admin = db.Column(db.Boolean, default=False)
     verified = db.Column(db.Boolean, default=False)
 
@@ -108,8 +112,8 @@ def register():
 
         user = User(username=username, name=name, email=email, phone=phone, bio=bio or '', profile_photo=photo_path, password=password)
 
-        if User.query.count() == 0:  # first user is admin
-            user.is_admin = True
+        if User.query.count() == 0:
+            user.is_admin = True  # First user becomes admin
 
         db.session.add(user)
         db.session.commit()
@@ -150,7 +154,7 @@ def profile(username):
 def uploads(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
-# Request Verification
+# ===================== VERIFICATION =====================
 @app.route('/request-verification', methods=['GET', 'POST'])
 @login_required
 def request_verification():
@@ -175,7 +179,7 @@ def request_verification():
         return redirect(url_for('index'))
     return render_template('request_verification.html')
 
-# Admin Panel
+# ===================== ADMIN PANEL =====================
 @app.route('/admin')
 @login_required
 def admin():
@@ -204,7 +208,7 @@ def handle_request(req_id, action):
     flash('Request updated')
     return redirect(url_for('admin'))
 
-# Text sharing
+# ===================== TEXT SHARING =====================
 @app.route('/share', methods=['POST'])
 @login_required
 def share():
@@ -226,7 +230,7 @@ def share():
     flash('Shared successfully!')
     return redirect(url_for('index'))
 
-# Socket events
+# ===================== SOCKET EVENTS =====================
 @socketio.on('connect')
 def handle_connect():
     print('Client connected')
@@ -235,8 +239,6 @@ def handle_connect():
 def handle_disconnect():
     print('Client disconnected')
 
-# ===================== MAIN =====================
+# ===================== MAIN ENTRY =====================
 if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
     socketio.run(app, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
