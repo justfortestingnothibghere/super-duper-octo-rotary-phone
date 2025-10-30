@@ -1,0 +1,38 @@
+{% extends 'base.html' %}
+{% block title %}Home - BlueTick{% endblock %}
+{% block content %}
+  <h1>Feed</h1>
+  {% if current_user.is_authenticated %}
+    <form action="/share" method="post">
+      <textarea name="content" placeholder="Share a short text..." required></textarea>
+      <button type="submit">Share</button>
+    </form>
+    <p><a href="/request-verification">Request Blue Tick</a></p>
+  {% else %}
+    <p>Please login to share texts or request verification.</p>
+  {% endif %}
+
+  <section id="feed">
+    {% for t in texts %}
+      <article class="text-item" id="text-{{ t.id }}">
+        <strong><a href="/profile/{{ t.user.username if t.user else 'unknown' }}">{{ t.user.username if t.user else 'unknown' }}</a></strong>
+        <div>{{ t.content }}</div>
+        <small>{{ t.created_at.strftime('%Y-%m-%d %H:%M') }}</small>
+      </article>
+    {% else %}
+      <p>No texts yet.</p>
+    {% endfor %}
+  </section>
+
+  <script>
+    const socket = io();
+    socket.on('new_text', data => {
+      const feed = document.getElementById('feed');
+      const article = document.createElement('article');
+      article.className = 'text-item';
+      article.id = 'text-' + data.id;
+      article.innerHTML = `<strong><a href='/profile/${data.user}'>${data.user}</a></strong><div>${data.content}</div><small>${data.created_at}</small>`;
+      feed.prepend(article);
+    });
+  </script>
+{% endblock %}
