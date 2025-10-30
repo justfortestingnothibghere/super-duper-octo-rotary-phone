@@ -1,5 +1,5 @@
 import eventlet
-eventlet.monkey_patch()  # ✅ Must be first, before any Flask imports!
+eventlet.monkey_patch()  # ✅ Must be FIRST, before any Flask imports!
 
 import os
 from datetime import datetime
@@ -10,36 +10,34 @@ from werkzeug.utils import secure_filename
 from flask_socketio import SocketIO
 from dotenv import load_dotenv
 
-# Load environment variables
+# ==================== LOAD ENVIRONMENT ====================
 load_dotenv()
 
-# ----- Setup -----
+# ==================== PATH SETUP ====================
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 PROFILE_FOLDER = os.path.join(UPLOAD_FOLDER, 'profile')
 DOC_FOLDER = os.path.join(UPLOAD_FOLDER, 'docs')
+
 for p in (UPLOAD_FOLDER, PROFILE_FOLDER, DOC_FOLDER):
     os.makedirs(p, exist_ok=True)
 
+# ==================== FLASK CONFIG ====================
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret')
 app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv('DATABASE_URL', 'sqlite:///' + os.path.join(BASE_DIR, 'data.db'))
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB limit
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16 MB max upload size
 
 db = SQLAlchemy(app)
 login = LoginManager(app)
 login.login_view = 'login'
 
-# ✅ Auto create tables for Render (important)
-with app.app_context():
-    db.create_all()
-
-# ✅ Enable real-time events
+# Enable socket.io (real-time updates)
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
-# ===================== MODELS =====================
+# ==================== MODELS ====================
 class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -48,7 +46,7 @@ class User(db.Model, UserMixin):
     phone = db.Column(db.String(40), nullable=True)
     bio = db.Column(db.Text, nullable=True)
     profile_photo = db.Column(db.String(300), nullable=True)
-    password = db.Column(db.String(200), nullable=False)  # ⚠️ Plain text (demo only)
+    password = db.Column(db.String(200), nullable=False)  # ⚠ Plain text for demo (not secure)
     is_admin = db.Column(db.Boolean, default=False)
     verified = db.Column(db.Boolean, default=False)
 
@@ -62,7 +60,7 @@ class VerificationRequest(db.Model):
     description = db.Column(db.Text, nullable=True)
     pan_number = db.Column(db.String(80), nullable=True)
     document_path = db.Column(db.String(300), nullable=True)
-    status = db.Column(db.String(20), default='pending')  # pending, approved, rejected
+    status = db.Column(db.String(20), default='pending')
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class SharedText(db.Model):
@@ -71,24 +69,31 @@ class SharedText(db.Model):
     content = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# ===================== LOGIN HANDLER =====================
+# ==================== LOGIN HANDLER ====================
 @login.user_loader
-def load_user(id):
-    return User.query.get(int(id))
+def load_user(user_id):
+    return User.query.get(int(user_id))
 
-# ===================== HELPERS =====================
+# ==================== FILE VALIDATION ====================
 ALLOWED_PHOTO = {'png', 'jpg', 'jpeg', 'gif'}
 ALLOWED_DOC = {'pdf', 'png', 'jpg', 'jpeg'}
 
 def allowed_file(filename, allowed):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed
 
-# ===================== ROUTES =====================
+# ==================== ROUTES ====================
 @app.route('/')
 def index():
-    texts = SharedText.query.order_by(SharedText.created_at.desc()).limit(50).all()
+    # Ensure tables exist (Render safe)
+    try:
+        texts = SharedText.query.order_by(SharedText.created_at.desc()).limit(50).all()
+    except Exception:
+        with app.app_context():
+            db.create_all()
+        texts = []
     return render_template('index.html', texts=texts)
 
+# ---------- REGISTER ----------
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     if request.method == 'POST':
@@ -99,7 +104,7 @@ def register():
         password = request.form['password']
         bio = request.form.get('bio')
 
-        if User.query.filter((User.username==username)|(User.email==email)).first():
+        if User.query.filter((User.username == username) | (User.email == email)).first():
             flash('Username or email already taken')
             return redirect(url_for('register'))
 
@@ -110,25 +115,33 @@ def register():
             photo.save(os.path.join(PROFILE_FOLDER, fname))
             photo_path = os.path.join('uploads', 'profile', fname)
 
-        user = User(username=username, name=name, email=email, phone=phone, bio=bio or '', profile_photo=photo_path, password=password)
+        user = User(
+            username=username,
+            name=name,
+            email=email,
+            phone=phone,
+            bio=bio or '',
+            profile_photo=photo_path,
+            password=password
+        )
 
         if User.query.count() == 0:
-            user.is_admin = True  # First user becomes admin
+            user.is_admin = True  # First registered user = admin
 
         db.session.add(user)
         db.session.commit()
         login_user(user)
         flash('Registered successfully!')
         return redirect(url_for('index'))
-
     return render_template('register.html')
 
+# ---------- LOGIN ----------
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if request.method == 'POST':
         loginid = request.form['loginid']
         password = request.form['password']
-        user = User.query.filter((User.username==loginid)|(User.email==loginid)).first()
+        user = User.query.filter((User.username == loginid) | (User.email == loginid)).first()
         if not user or user.password != password:
             flash('Invalid credentials')
             return redirect(url_for('login'))
@@ -137,6 +150,7 @@ def login():
         return redirect(url_for('index'))
     return render_template('login.html')
 
+# ---------- LOGOUT ----------
 @app.route('/logout')
 @login_required
 def logout():
@@ -144,17 +158,19 @@ def logout():
     flash('Logged out')
     return redirect(url_for('index'))
 
+# ---------- PROFILE ----------
 @app.route('/profile/<username>')
 def profile(username):
     user = User.query.filter_by(username=username).first_or_404()
     texts = SharedText.query.filter_by(user_id=user.id).order_by(SharedText.created_at.desc()).all()
     return render_template('profile.html', user=user, texts=texts)
 
+# ---------- FILE SERVING ----------
 @app.route('/uploads/<path:filename>')
 def uploads(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
-# ===================== VERIFICATION =====================
+# ---------- REQUEST VERIFICATION ----------
 @app.route('/request-verification', methods=['GET', 'POST'])
 @login_required
 def request_verification():
@@ -163,23 +179,29 @@ def request_verification():
         pan = request.form.get('pan_number')
         doc = request.files.get('document')
         doc_path = None
+
         if doc and allowed_file(doc.filename, ALLOWED_DOC):
             fname = secure_filename(f"{current_user.username}_doc_{int(datetime.utcnow().timestamp())}_{doc.filename}")
             doc.save(os.path.join(DOC_FOLDER, fname))
             doc_path = os.path.join('uploads', 'docs', fname)
 
         req = VerificationRequest(
-            user_id=current_user.id, username=current_user.username,
-            name=current_user.name, phone=current_user.phone, email=current_user.email,
-            description=description, pan_number=pan, document_path=doc_path
+            user_id=current_user.id,
+            username=current_user.username,
+            name=current_user.name,
+            phone=current_user.phone,
+            email=current_user.email,
+            description=description,
+            pan_number=pan,
+            document_path=doc_path
         )
         db.session.add(req)
         db.session.commit()
-        flash('Verification request submitted')
+        flash('Verification request submitted!')
         return redirect(url_for('index'))
     return render_template('request_verification.html')
 
-# ===================== ADMIN PANEL =====================
+# ---------- ADMIN PANEL ----------
 @app.route('/admin')
 @login_required
 def admin():
@@ -208,7 +230,7 @@ def handle_request(req_id, action):
     flash('Request updated')
     return redirect(url_for('admin'))
 
-# ===================== TEXT SHARING =====================
+# ---------- TEXT SHARING ----------
 @app.route('/share', methods=['POST'])
 @login_required
 def share():
@@ -226,11 +248,10 @@ def share():
         'content': st.content,
         'created_at': st.created_at.strftime('%Y-%m-%d %H:%M:%S')
     }, broadcast=True)
-
     flash('Shared successfully!')
     return redirect(url_for('index'))
 
-# ===================== SOCKET EVENTS =====================
+# ---------- SOCKET EVENTS ----------
 @socketio.on('connect')
 def handle_connect():
     print('Client connected')
@@ -239,6 +260,9 @@ def handle_connect():
 def handle_disconnect():
     print('Client disconnected')
 
-# ===================== MAIN ENTRY =====================
+# ==================== MAIN ====================
 if __name__ == '__main__':
+    # Ensure DB exists before run
+    with app.app_context():
+        db.create_all()
     socketio.run(app, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
