@@ -1,0 +1,14 @@
+{% extends 'base.html' %}
+{% block content %}
+  <h2>Register</h2>
+  <form method="post" enctype="multipart/form-data">
+    <input name="username" placeholder="username" required>
+    <input name="name" placeholder="name" required>
+    <input name="email" placeholder="email" required>
+    <input name="phone" placeholder="phone">
+    <input name="password" placeholder="password" type="password" required>
+    <textarea name="bio" placeholder="bio"></textarea>
+    <label>Profile photo: <input type="file" name="profile_photo"></label>
+    <button type="submit">Register</button>
+  </form>
+{% endblock %}
