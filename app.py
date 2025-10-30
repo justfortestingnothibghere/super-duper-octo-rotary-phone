@@ -1,14 +1,19 @@
+import eventlet
+eventlet.monkey_patch()  # ✅ must be first!
+
 import os
 from datetime import datetime
 from flask import Flask, render_template, request, redirect, url_for, flash, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user, UserMixin
 from werkzeug.utils import secure_filename
-from flask_socketio import SocketIO, emit, join_room, leave_room
+from flask_socketio import SocketIO
 from dotenv import load_dotenv
 
+# Load environment
 load_dotenv()
 
+# ----- Setup -----
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
 PROFILE_FOLDER = os.path.join(UPLOAD_FOLDER, 'profile')
@@ -26,9 +31,11 @@ app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 db = SQLAlchemy(app)
 login = LoginManager(app)
 login.login_view = 'login'
-socketio = SocketIO(app, cors_allowed_origins="*")
 
-# ----- Models -----
+# ✅ Enable SocketIO with Eventlet
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
+
+# ===================== MODELS =====================
 class User(db.Model, UserMixin):
     id = db.Column(db.Integer, primary_key=True)
     username = db.Column(db.String(80), unique=True, nullable=False)
@@ -37,7 +44,7 @@ class User(db.Model, UserMixin):
     phone = db.Column(db.String(40), nullable=True)
     bio = db.Column(db.Text, nullable=True)
     profile_photo = db.Column(db.String(300), nullable=True)
-    password = db.Column(db.String(200), nullable=False)  # Note: plaintext for demo (not secure)
+    password = db.Column(db.String(200), nullable=False)  # NOTE: plain text (demo)
     is_admin = db.Column(db.Boolean, default=False)
     verified = db.Column(db.Boolean, default=False)
 
@@ -60,19 +67,19 @@ class SharedText(db.Model):
     content = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-# ----- Login loader -----
+# ===================== LOGIN HANDLER =====================
 @login.user_loader
 def load_user(id):
     return User.query.get(int(id))
 
-# ----- Helpers -----
+# ===================== HELPERS =====================
 ALLOWED_PHOTO = {'png', 'jpg', 'jpeg', 'gif'}
 ALLOWED_DOC = {'pdf', 'png', 'jpg', 'jpeg'}
 
 def allowed_file(filename, allowed):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed
 
-# ----- Routes -----
+# ===================== ROUTES =====================
 @app.route('/')
 def index():
     texts = SharedText.query.order_by(SharedText.created_at.desc()).limit(50).all()
@@ -87,25 +94,29 @@ def register():
         phone = request.form.get('phone')
         password = request.form['password']
         bio = request.form.get('bio')
+
         if User.query.filter((User.username==username)|(User.email==email)).first():
             flash('Username or email already taken')
             return redirect(url_for('register'))
-        # profile photo
+
         photo = request.files.get('profile_photo')
         photo_path = None
         if photo and allowed_file(photo.filename, ALLOWED_PHOTO):
             fname = secure_filename(f"{username}_{int(datetime.utcnow().timestamp())}_{photo.filename}")
             photo.save(os.path.join(PROFILE_FOLDER, fname))
             photo_path = os.path.join('uploads', 'profile', fname)
+
         user = User(username=username, name=name, email=email, phone=phone, bio=bio or '', profile_photo=photo_path, password=password)
-        # First registered user will be admin (convenience)
-        if User.query.count() == 0:
+
+        if User.query.count() == 0:  # first user is admin
             user.is_admin = True
+
         db.session.add(user)
         db.session.commit()
         login_user(user)
-        flash('Registered and logged in')
+        flash('Registered successfully!')
         return redirect(url_for('index'))
+
     return render_template('register.html')
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -118,7 +129,7 @@ def login():
             flash('Invalid credentials')
             return redirect(url_for('login'))
         login_user(user)
-        flash('Logged in')
+        flash('Logged in successfully!')
         return redirect(url_for('index'))
     return render_template('login.html')
 
@@ -139,7 +150,7 @@ def profile(username):
 def uploads(filename):
     return send_from_directory(UPLOAD_FOLDER, filename)
 
-# Verification request
+# Request Verification
 @app.route('/request-verification', methods=['GET', 'POST'])
 @login_required
 def request_verification():
@@ -152,14 +163,19 @@ def request_verification():
             fname = secure_filename(f"{current_user.username}_doc_{int(datetime.utcnow().timestamp())}_{doc.filename}")
             doc.save(os.path.join(DOC_FOLDER, fname))
             doc_path = os.path.join('uploads', 'docs', fname)
-        req = VerificationRequest(user_id=current_user.id, username=current_user.username, name=current_user.name, phone=current_user.phone, email=current_user.email, description=description, pan_number=pan, document_path=doc_path)
+
+        req = VerificationRequest(
+            user_id=current_user.id, username=current_user.username,
+            name=current_user.name, phone=current_user.phone, email=current_user.email,
+            description=description, pan_number=pan, document_path=doc_path
+        )
         db.session.add(req)
         db.session.commit()
         flash('Verification request submitted')
         return redirect(url_for('index'))
     return render_template('request_verification.html')
 
-# Admin panel
+# Admin Panel
 @app.route('/admin')
 @login_required
 def admin():
@@ -188,7 +204,7 @@ def handle_request(req_id, action):
     flash('Request updated')
     return redirect(url_for('admin'))
 
-# Sharing text
+# Text sharing
 @app.route('/share', methods=['POST'])
 @login_required
 def share():
@@ -199,27 +215,28 @@ def share():
     st = SharedText(user_id=current_user.id, content=content)
     db.session.add(st)
     db.session.commit()
-    # broadcast via socket
+
     socketio.emit('new_text', {
         'id': st.id,
         'user': current_user.username,
         'content': st.content,
         'created_at': st.created_at.strftime('%Y-%m-%d %H:%M:%S')
     }, broadcast=True)
-    flash('Shared')
+
+    flash('Shared successfully!')
     return redirect(url_for('index'))
 
-# Socket events (for real-time updates)
+# Socket events
 @socketio.on('connect')
 def handle_connect():
-    print('client connected')
+    print('Client connected')
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    print('client disconnected')
+    print('Client disconnected')
 
+# ===================== MAIN =====================
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-    # Run with socketio for local dev
     socketio.run(app, host='0.0.0.0', port=int(os.getenv('PORT', 5000)))
